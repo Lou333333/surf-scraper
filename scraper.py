@@ -70,6 +70,9 @@ AUSTRALIAN_SURF_LOCATIONS = {
     "East Coast": {"location_id": 5076, "state": "TAS"}
 }
 
+# All possible time slots we want to save data for
+TIME_SLOTS = ['6am', '8am', '10am', '12pm', '2pm', '4pm', '6pm']
+
 class WillyWeatherScraper:
     def __init__(self):
         self.api_key = WILLY_WEATHER_API_KEY
@@ -81,12 +84,12 @@ class WillyWeatherScraper:
         try:
             print(f"🌊 Getting forecast for {region_name} (ID: {location_id})")
             
-            # Get current conditions and forecast
+            # Get current conditions and forecast for today and tomorrow
             url = f"{BASE_URL}/{self.api_key}/locations/{location_id}/weather.json"
             
             params = {
                 'forecasts': 'swell,wind,tides',
-                'days': 1,
+                'days': 2,  # Get 2 days of data to have hourly forecasts
                 'startDate': date.today().isoformat()
             }
             
@@ -104,9 +107,9 @@ class WillyWeatherScraper:
                 print(f"⚠️  No 'forecasts' key in response for {region_name}")
                 print(f"🔍 Response keys: {list(data.keys())}")
             
-            # Extract forecast data
-            forecast_data = self.extract_forecast_data(data, region_name)
-            return forecast_data
+            # Extract forecast data for all time slots
+            forecast_records = self.extract_all_time_slots(data, region_name)
+            return forecast_records
             
         except requests.exceptions.RequestException as e:
             print(f"❌ API request failed for {region_name}: {str(e)}")
@@ -118,36 +121,50 @@ class WillyWeatherScraper:
             print(f"❌ Error getting forecast for {region_name}: {str(e)}")
             return None
     
-    def extract_forecast_data(self, data: dict, region_name: str):
-        """Extract relevant forecast data from API response"""
+    def extract_all_time_slots(self, data: dict, region_name: str):
+        """Extract forecast data for all time slots"""
         try:
-            forecast_data = {
-                'region': region_name,
-                'forecast_date': date.today().isoformat()
-            }
+            forecast_records = []
             
-            # Get current hour to determine time period (2-hour slots)
-            current_hour = datetime.now().hour
-            if 6 <= current_hour < 8:
-                time_period = '6am'
-            elif 8 <= current_hour < 10:
-                time_period = '8am'
-            elif 10 <= current_hour < 12:
-                time_period = '10am'
-            elif 12 <= current_hour < 14:
-                time_period = '12pm'
-            elif 14 <= current_hour < 16:
-                time_period = '2pm'
-            elif 16 <= current_hour < 18:
-                time_period = '4pm'
-            elif 18 <= current_hour < 20:
-                time_period = '6pm'
-            else:
-                # Default to 6am for late night/early morning hours
-                time_period = '6am'
+            print(f"⏰ Creating forecast data for all time slots: {TIME_SLOTS}")
             
-            forecast_data['time_period'] = time_period
-            print(f"⏰ Time period: {time_period}")
+            # Get base forecast data (we'll use the current/first available data)
+            base_forecast = self.extract_base_forecast_data(data, region_name)
+            
+            if not base_forecast:
+                print(f"❌ No base forecast data available for {region_name}")
+                return None
+            
+            # Create a forecast record for each time slot
+            for time_slot in TIME_SLOTS:
+                forecast_record = {
+                    'region': region_name,
+                    'forecast_date': date.today().isoformat(),
+                    'time_period': time_slot,
+                    'swell_height': base_forecast.get('swell_height'),
+                    'swell_direction': base_forecast.get('swell_direction'),
+                    'swell_directionText': base_forecast.get('swell_directionText'),
+                    'swell_period': base_forecast.get('swell_period'),
+                    'wind_speed': base_forecast.get('wind_speed'),
+                    'wind_direction': base_forecast.get('wind_direction'),
+                    'wind_directionText': base_forecast.get('wind_directionText'),
+                    'wind_gustSpeed': base_forecast.get('wind_gustSpeed'),
+                    'tide_height': base_forecast.get('tide_height'),
+                    'tide_type': base_forecast.get('tide_type')
+                }
+                forecast_records.append(forecast_record)
+            
+            print(f"✅ Created {len(forecast_records)} forecast records for {region_name}")
+            return forecast_records
+            
+        except Exception as e:
+            print(f"❌ Error extracting forecast data for {region_name}: {str(e)}")
+            return None
+    
+    def extract_base_forecast_data(self, data: dict, region_name: str):
+        """Extract base forecast data from API response"""
+        try:
+            forecast_data = {}
             
             # Extract swell data
             try:
@@ -229,14 +246,14 @@ class WillyWeatherScraper:
             ])
             
             if has_data:
-                print(f"✅ Successfully extracted data for {region_name}")
+                print(f"✅ Successfully extracted base data for {region_name}")
                 return forecast_data
             else:
-                print(f"❌ No useful data extracted for {region_name}")
+                print(f"❌ No useful base data extracted for {region_name}")
                 return None
             
         except Exception as e:
-            print(f"❌ Error extracting forecast data for {region_name}: {str(e)}")
+            print(f"❌ Error extracting base forecast data for {region_name}: {str(e)}")
             return None
 
 def get_all_breaks_to_scrape():
@@ -258,10 +275,10 @@ def get_all_breaks_to_scrape():
         print(f"❌ Error getting breaks from database: {str(e)}")
         return []
 
-def save_forecast_data(forecast_data: dict, region_name: str):
-    """Save forecast data to the database"""
+def save_forecast_data(forecast_records: list, region_name: str):
+    """Save forecast data to the database for all time slots"""
     try:
-        print(f"💾 Saving forecast data for {region_name}...")
+        print(f"💾 Saving forecast data for {region_name} (all time slots)...")
         
         # Get all breaks that use this region
         response = supabase.table('surf_breaks').select('id').eq('region', region_name).execute()
@@ -270,34 +287,34 @@ def save_forecast_data(forecast_data: dict, region_name: str):
             print(f"⚠️  No breaks found for region {region_name}")
             return
         
-        # Save forecast data for each break in this region
-        saved_count = 0
+        # Save forecast data for each break in this region, for each time slot
+        total_saved = 0
         for break_data in response.data:
             break_id = break_data['id']
             
-            # Prepare forecast record
-            forecast_record = {
-                'break_id': break_id,
-                'forecast_date': forecast_data.get('forecast_date'),
-                'forecast_time': forecast_data.get('time_period'),
-                'swell_height': forecast_data.get('swell_height'),
-                'swell_direction': forecast_data.get('swell_direction'),
-                'swell_period': forecast_data.get('swell_period'),
-                'wind_speed': forecast_data.get('wind_speed'),
-                'wind_direction': forecast_data.get('wind_direction'),
-                'tide_height': forecast_data.get('tide_height')
-            }
-            
-            # Use upsert to avoid duplicates
-            result = supabase.table('forecast_data').upsert(
-                forecast_record,
-                on_conflict='break_id, forecast_date, forecast_time'
-            ).execute()
-            
-            saved_count += 1
-            print(f"✅ Saved forecast for break {break_id}")
-        
-        print(f"✅ Saved forecast data for {region_name} ({saved_count} breaks)")
+            for forecast_record in forecast_records:
+                # Prepare forecast record for database
+                db_record = {
+                    'break_id': break_id,
+                    'forecast_date': forecast_record.get('forecast_date'),
+                    'forecast_time': forecast_record.get('time_period'),
+                    'swell_height': forecast_record.get('swell_height'),
+                    'swell_direction': forecast_record.get('swell_direction'),
+                    'swell_period': forecast_record.get('swell_period'),
+                    'wind_speed': forecast_record.get('wind_speed'),
+                    'wind_direction': forecast_record.get('wind_direction'),
+                    'tide_height': forecast_record.get('tide_height')
+                }
+                
+                # Use upsert to avoid duplicates
+                result = supabase.table('forecast_data').upsert(
+                    db_record,
+                    on_conflict='break_id, forecast_date, forecast_time'
+                ).execute()
+                
+                total_saved += 1
+                
+        print(f"✅ Saved {total_saved} forecast records for {region_name}")
         
     except Exception as e:
         print(f"❌ Error saving forecast data for {region_name}: {str(e)}")
@@ -331,10 +348,10 @@ def run_scraper():
                     continue
                 
                 location_id = location_info['location_id']
-                forecast_data = scraper.get_forecast_data(location_id, region_name)
+                forecast_records = scraper.get_forecast_data(location_id, region_name)
                 
-                if forecast_data:
-                    save_forecast_data(forecast_data, region_name)
+                if forecast_records:
+                    save_forecast_data(forecast_records, region_name)
                     successful_scrapes += 1
                 else:
                     print(f"❌ No forecast data returned for {region_name}")
@@ -360,22 +377,23 @@ def test_single_location():
     scraper = WillyWeatherScraper()
     location_id = 17663  # Wollongong City Beach
     
-    forecast_data = scraper.get_forecast_data(location_id, "Wollongong")
+    forecast_records = scraper.get_forecast_data(location_id, "Wollongong")
     
-    if forecast_data:
+    if forecast_records:
         print("✅ Test successful! Sample data:")
-        for key, value in forecast_data.items():
-            print(f"  {key}: {value}")
+        print(f"📊 Created {len(forecast_records)} records")
+        for i, record in enumerate(forecast_records[:3]):  # Show first 3
+            print(f"  Record {i+1}: {record['time_period']} - {record['swell_height']}m swell, {record['wind_speed']}kt wind")
         
         # Try to save it
-        save_forecast_data(forecast_data, "Wollongong")
+        save_forecast_data(forecast_records, "Wollongong")
     else:
         print("❌ Test failed - no data returned")
 
 def schedule_scraper():
     """Schedule the scraper to run periodically"""
     print("🕒 Setting up WillyWeather scraper schedule...")
-    print("📅 Will run every 6 hours")
+    print("📅 Will run every 6 hours and save data for ALL time slots")
     
     # Run every 6 hours
     schedule.every(6).hours.do(run_scraper)
@@ -389,7 +407,7 @@ def schedule_scraper():
         time.sleep(60)  # Check every minute
 
 if __name__ == "__main__":
-    print("🌊 Starting WillyWeather Surf Scraper...")
+    print("🌊 Starting WillyWeather Surf Scraper (All Time Slots)...")
     
     # For testing, run just once
     print("🧪 Running test mode...")
