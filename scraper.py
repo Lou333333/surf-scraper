@@ -126,14 +126,25 @@ class WillyWeatherScraper:
                 'forecast_date': date.today().isoformat()
             }
             
-            # Get current hour to determine time period
-            current_hour = datetime.now().hour
-            if 6 <= current_hour < 12:
-                time_period = 'morning'
-            elif 12 <= current_hour < 17:
-                time_period = 'midday'
-            else:
-                time_period = 'afternoon'
+            # Get current hour to determine time period (2-hour slots)
+        current_hour = datetime.now().hour
+        if 6 <= current_hour < 8:
+            time_period = '6am'
+        elif 8 <= current_hour < 10:
+            time_period = '8am'
+        elif 10 <= current_hour < 12:
+            time_period = '10am'
+        elif 12 <= current_hour < 14:
+            time_period = '12pm'
+        elif 14 <= current_hour < 16:
+            time_period = '2pm'
+        elif 16 <= current_hour < 18:
+            time_period = '4pm'
+        elif 18 <= current_hour < 20:
+            time_period = '6pm'
+        else:
+            # Default to 6am for late night/early morning hours
+            time_period = '6am'
             
             forecast_data['time_period'] = time_period
             print(f"⏰ Time period: {time_period}")
