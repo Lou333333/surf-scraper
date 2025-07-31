@@ -1,3 +1,16 @@
+# Add this at the top of your scraper.py, right after the imports:
+import os
+from dotenv import load_dotenv
+
+# Debug environment loading
+print("🔍 Debug: Environment loading in Railway")
+load_dotenv()
+
+print(f"NEXT_PUBLIC_SUPABASE_URL found: {bool(os.getenv('NEXT_PUBLIC_SUPABASE_URL'))}")
+print(f"SUPABASE_SERVICE_KEY found: {bool(os.getenv('SUPABASE_SERVICE_KEY'))}")
+print(f"WILLY_WEATHER_API_KEY found: {bool(os.getenv('WILLY_WEATHER_API_KEY'))}")
+
+# Then your existing Supabase client creation...
 import os
 import requests
 import schedule
