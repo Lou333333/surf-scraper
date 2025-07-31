@@ -9,17 +9,17 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Initialize Supabase client
+# Initialize Supabase client with SERVICE KEY
 supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
+    os.getenv("NEXT_PUBLIC_SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_KEY")  # Changed from NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
 # WillyWeather API configuration
 WILLY_WEATHER_API_KEY = os.getenv("WILLY_WEATHER_API_KEY")
 BASE_URL = "https://api.willyweather.com.au/v2"
 
-# Australian surf locations from WillyWeather (FIXED location IDs)
+# Australian surf locations from WillyWeather
 AUSTRALIAN_SURF_LOCATIONS = {
     # New South Wales
     "Sydney": {"location_id": 4950, "state": "NSW"},
@@ -27,7 +27,7 @@ AUSTRALIAN_SURF_LOCATIONS = {
     "Newcastle": {"location_id": 4988, "state": "NSW"},
     "Mid North Coast": {"location_id": 5049, "state": "NSW"},
     "Byron Bay": {"location_id": 4947, "state": "NSW"},
-    "Wollongong": {"location_id": 17663, "state": "NSW"},  # This is correct for Wollongong City Beach
+    "Wollongong": {"location_id": 17663, "state": "NSW"},
     "South Coast": {"location_id": 4923, "state": "NSW"},
     "Far North Coast": {"location_id": 4947, "state": "NSW"},
     
@@ -70,8 +70,16 @@ AUSTRALIAN_SURF_LOCATIONS = {
     "East Coast": {"location_id": 5076, "state": "TAS"}
 }
 
-# All possible time slots we want to save data for
-TIME_SLOTS = ['6am', '8am', '10am', '12pm', '2pm', '4pm', '6pm']
+# Time slots with hour mapping for API data extraction
+TIME_SLOTS = [
+    {'period': '6am', 'hour': 6},
+    {'period': '8am', 'hour': 8},
+    {'period': '10am', 'hour': 10},
+    {'period': '12pm', 'hour': 12},
+    {'period': '2pm', 'hour': 14},
+    {'period': '4pm', 'hour': 16},
+    {'period': '6pm', 'hour': 18}
+]
 
 class WillyWeatherScraper:
     def __init__(self):
@@ -107,8 +115,8 @@ class WillyWeatherScraper:
                 print(f"⚠️  No 'forecasts' key in response for {region_name}")
                 print(f"🔍 Response keys: {list(data.keys())}")
             
-            # Extract forecast data for all time slots
-            forecast_records = self.extract_all_time_slots(data, region_name)
+            # Extract forecast data for all time slots with hourly specificity
+            forecast_records = self.extract_hourly_forecasts(data, region_name)
             return forecast_records
             
         except requests.exceptions.RequestException as e:
@@ -121,140 +129,116 @@ class WillyWeatherScraper:
             print(f"❌ Error getting forecast for {region_name}: {str(e)}")
             return None
     
-    def extract_all_time_slots(self, data: dict, region_name: str):
-        """Extract forecast data for all time slots"""
+    def extract_hourly_forecasts(self, data: dict, region_name: str):
+        """Extract forecast data for specific hours when available"""
         try:
             forecast_records = []
             
-            print(f"⏰ Creating forecast data for all time slots: {TIME_SLOTS}")
+            print(f"⏰ Extracting hourly forecast data for {region_name}")
             
-            # Get base forecast data (we'll use the current/first available data)
-            base_forecast = self.extract_base_forecast_data(data, region_name)
+            # Extract all available entries for today
+            swell_entries = self.get_forecast_entries(data, 'swell')
+            wind_entries = self.get_forecast_entries(data, 'wind')
+            tide_entries = self.get_forecast_entries(data, 'tides')
             
-            if not base_forecast:
-                print(f"❌ No base forecast data available for {region_name}")
-                return None
+            print(f"📊 Found {len(swell_entries)} swell, {len(wind_entries)} wind, {len(tide_entries)} tide entries")
             
-            # Create a forecast record for each time slot
-            for time_slot in TIME_SLOTS:
+            # Create forecast for each time slot
+            for slot in TIME_SLOTS:
+                time_period = slot['period']
+                target_hour = slot['hour']
+                
+                print(f"⌚ Processing {time_period} (hour {target_hour})")
+                
+                # Find best matching data for this hour
+                swell_data = self.find_best_match(swell_entries, target_hour)
+                wind_data = self.find_best_match(wind_entries, target_hour)
+                tide_data = self.find_best_match(tide_entries, target_hour)
+                
                 forecast_record = {
                     'region': region_name,
                     'forecast_date': date.today().isoformat(),
-                    'time_period': time_slot,
-                    'swell_height': base_forecast.get('swell_height'),
-                    'swell_direction': base_forecast.get('swell_direction'),
-                    'swell_directionText': base_forecast.get('swell_directionText'),
-                    'swell_period': base_forecast.get('swell_period'),
-                    'wind_speed': base_forecast.get('wind_speed'),
-                    'wind_direction': base_forecast.get('wind_direction'),
-                    'wind_directionText': base_forecast.get('wind_directionText'),
-                    'wind_gustSpeed': base_forecast.get('wind_gustSpeed'),
-                    'tide_height': base_forecast.get('tide_height'),
-                    'tide_type': base_forecast.get('tide_type')
+                    'time_period': time_period,
+                    'swell_height': swell_data.get('height') if swell_data else None,
+                    'swell_direction': swell_data.get('direction') if swell_data else None,
+                    'swell_period': swell_data.get('period') if swell_data else None,
+                    'wind_speed': wind_data.get('speed') if wind_data else None,
+                    'wind_direction': wind_data.get('direction') if wind_data else None,
+                    'tide_height': tide_data.get('height') if tide_data else None
                 }
+                
                 forecast_records.append(forecast_record)
+                
+                # Log what data we found for this slot
+                swell_info = f"{swell_data.get('height', 'N/A')}m" if swell_data else "N/A"
+                wind_info = f"{wind_data.get('speed', 'N/A')}kt" if wind_data else "N/A"
+                print(f"  ✅ {time_period}: Swell {swell_info}, Wind {wind_info}")
             
-            print(f"✅ Created {len(forecast_records)} forecast records for {region_name}")
+            print(f"✅ Created {len(forecast_records)} hourly forecast records for {region_name}")
             return forecast_records
             
         except Exception as e:
-            print(f"❌ Error extracting forecast data for {region_name}: {str(e)}")
+            print(f"❌ Error extracting hourly forecasts for {region_name}: {str(e)}")
             return None
     
-    def extract_base_forecast_data(self, data: dict, region_name: str):
-        """Extract base forecast data from API response"""
+    def get_forecast_entries(self, data: dict, forecast_type: str):
+        """Extract all entries for a specific forecast type"""
         try:
-            forecast_data = {}
+            if 'forecasts' not in data or forecast_type not in data['forecasts']:
+                return []
             
-            # Extract swell data
-            try:
-                if 'forecasts' in data and 'swell' in data['forecasts']:
-                    swell_data = data['forecasts']['swell']
-                    if 'days' in swell_data and len(swell_data['days']) > 0:
-                        swell_entries = swell_data['days'][0].get('entries', [])
-                        if swell_entries:
-                            # Get the first available swell entry
-                            current_swell = swell_entries[0]
-                            
-                            forecast_data['swell_height'] = current_swell.get('height')
-                            forecast_data['swell_direction'] = current_swell.get('direction')
-                            forecast_data['swell_directionText'] = current_swell.get('directionText')
-                            forecast_data['swell_period'] = current_swell.get('period')
-                            
-                            print(f"🌊 Swell: {forecast_data.get('swell_height')}m @ {forecast_data.get('swell_period')}s")
-                        else:
-                            print(f"⚠️  No swell entries found for {region_name}")
-                    else:
-                        print(f"⚠️  No swell days data for {region_name}")
-                else:
-                    print(f"⚠️  No swell forecast data for {region_name}")
-            except Exception as e:
-                print(f"⚠️  Error extracting swell data: {str(e)}")
+            forecast_data = data['forecasts'][forecast_type]
+            if 'days' not in forecast_data or len(forecast_data['days']) == 0:
+                return []
             
-            # Extract wind data
-            try:
-                if 'forecasts' in data and 'wind' in data['forecasts']:
-                    wind_data = data['forecasts']['wind']
-                    if 'days' in wind_data and len(wind_data['days']) > 0:
-                        wind_entries = wind_data['days'][0].get('entries', [])
-                        if wind_entries:
-                            # Get the first available wind entry
-                            current_wind = wind_entries[0]
-                            
-                            forecast_data['wind_speed'] = current_wind.get('speed')
-                            forecast_data['wind_direction'] = current_wind.get('direction')
-                            forecast_data['wind_directionText'] = current_wind.get('directionText')
-                            forecast_data['wind_gustSpeed'] = current_wind.get('gustSpeed')
-                            
-                            print(f"💨 Wind: {forecast_data.get('wind_speed')}kt from {forecast_data.get('wind_directionText')}")
-                        else:
-                            print(f"⚠️  No wind entries found for {region_name}")
-                    else:
-                        print(f"⚠️  No wind days data for {region_name}")
-                else:
-                    print(f"⚠️  No wind forecast data for {region_name}")
-            except Exception as e:
-                print(f"⚠️  Error extracting wind data: {str(e)}")
+            # Get today's entries
+            today_data = forecast_data['days'][0]
+            entries = today_data.get('entries', [])
             
-            # Extract tide data
-            try:
-                if 'forecasts' in data and 'tides' in data['forecasts']:
-                    tide_data = data['forecasts']['tides']
-                    if 'days' in tide_data and len(tide_data['days']) > 0:
-                        tide_entries = tide_data['days'][0].get('entries', [])
-                        if tide_entries:
-                            # Get the first available tide entry
-                            current_tide = tide_entries[0]
-                            forecast_data['tide_height'] = current_tide.get('height')
-                            forecast_data['tide_type'] = current_tide.get('type')
-                            
-                            print(f"🌊 Tide: {forecast_data.get('tide_height')}m ({forecast_data.get('tide_type')})")
-                        else:
-                            print(f"⚠️  No tide entries found for {region_name}")
-                    else:
-                        print(f"⚠️  No tide days data for {region_name}")
-                else:
-                    print(f"⚠️  No tide forecast data for {region_name}")
-            except Exception as e:
-                print(f"⚠️  Error extracting tide data: {str(e)}")
+            # Add timestamp info to entries if available
+            for entry in entries:
+                if 'dateTime' in entry:
+                    # Parse the datetime if available
+                    try:
+                        dt = datetime.fromisoformat(entry['dateTime'].replace('Z', '+00:00'))
+                        entry['hour'] = dt.hour
+                    except:
+                        pass
             
-            # Check if we got any useful data
-            has_data = any([
-                forecast_data.get('swell_height'),
-                forecast_data.get('wind_speed'),
-                forecast_data.get('tide_height')
-            ])
-            
-            if has_data:
-                print(f"✅ Successfully extracted base data for {region_name}")
-                return forecast_data
-            else:
-                print(f"❌ No useful base data extracted for {region_name}")
-                return None
+            return entries
             
         except Exception as e:
-            print(f"❌ Error extracting base forecast data for {region_name}: {str(e)}")
+            print(f"⚠️ Error getting {forecast_type} entries: {str(e)}")
+            return []
+    
+    def find_best_match(self, entries: list, target_hour: int):
+        """Find the entry closest to the target hour"""
+        if not entries:
             return None
+        
+        # If entries have hour information, find closest match
+        entries_with_hours = [e for e in entries if 'hour' in e]
+        
+        if entries_with_hours:
+            # Find entry closest to target hour
+            best_entry = min(entries_with_hours, 
+                           key=lambda x: abs(x['hour'] - target_hour))
+            return best_entry
+        
+        # Fallback: use entry based on position (rough time estimation)
+        if len(entries) >= 4:
+            # Assume entries are roughly evenly distributed through the day
+            if target_hour <= 8:
+                return entries[0]  # Early morning
+            elif target_hour <= 12:
+                return entries[1]  # Late morning
+            elif target_hour <= 16:
+                return entries[2]  # Afternoon
+            else:
+                return entries[3]  # Evening
+        
+        # Final fallback: just use first entry
+        return entries[0] if entries else None
 
 def get_all_breaks_to_scrape():
     """Get all unique regions from the database that need scraping"""
@@ -315,6 +299,7 @@ def save_forecast_data(forecast_records: list, region_name: str):
                 total_saved += 1
                 
         print(f"✅ Saved {total_saved} forecast records for {region_name}")
+        print(f"📊 Sample data: {forecast_records[0] if forecast_records else 'No data'}")
         
     except Exception as e:
         print(f"❌ Error saving forecast data for {region_name}: {str(e)}")
@@ -382,8 +367,10 @@ def test_single_location():
     if forecast_records:
         print("✅ Test successful! Sample data:")
         print(f"📊 Created {len(forecast_records)} records")
-        for i, record in enumerate(forecast_records[:3]):  # Show first 3
-            print(f"  Record {i+1}: {record['time_period']} - {record['swell_height']}m swell, {record['wind_speed']}kt wind")
+        for i, record in enumerate(forecast_records):
+            swell = f"{record['swell_height']}m" if record['swell_height'] else "N/A"
+            wind = f"{record['wind_speed']}kt" if record['wind_speed'] else "N/A"
+            print(f"  {record['time_period']}: Swell {swell}, Wind {wind}")
         
         # Try to save it
         save_forecast_data(forecast_records, "Wollongong")
@@ -393,7 +380,7 @@ def test_single_location():
 def schedule_scraper():
     """Schedule the scraper to run periodically"""
     print("🕒 Setting up WillyWeather scraper schedule...")
-    print("📅 Will run every 6 hours and save data for ALL time slots")
+    print("📅 Will run every 6 hours and save hourly-specific data")
     
     # Run every 6 hours
     schedule.every(6).hours.do(run_scraper)
@@ -407,11 +394,11 @@ def schedule_scraper():
         time.sleep(60)  # Check every minute
 
 if __name__ == "__main__":
-    print("🌊 Starting WillyWeather Surf Scraper (All Time Slots)...")
+    print("🌊 Starting Enhanced WillyWeather Surf Scraper...")
     
     # For testing, run just once
     print("🧪 Running test mode...")
-    # test_single_location()
+    test_single_location()
     
     # Uncomment this to run the full scraper
     schedule_scraper()
