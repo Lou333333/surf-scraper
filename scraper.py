@@ -127,24 +127,24 @@ class WillyWeatherScraper:
             }
             
             # Get current hour to determine time period (2-hour slots)
-        current_hour = datetime.now().hour
-        if 6 <= current_hour < 8:
-            time_period = '6am'
-        elif 8 <= current_hour < 10:
-            time_period = '8am'
-        elif 10 <= current_hour < 12:
-            time_period = '10am'
-        elif 12 <= current_hour < 14:
-            time_period = '12pm'
-        elif 14 <= current_hour < 16:
-            time_period = '2pm'
-        elif 16 <= current_hour < 18:
-            time_period = '4pm'
-        elif 18 <= current_hour < 20:
-            time_period = '6pm'
-        else:
-            # Default to 6am for late night/early morning hours
-            time_period = '6am'
+            current_hour = datetime.now().hour
+            if 6 <= current_hour < 8:
+                time_period = '6am'
+            elif 8 <= current_hour < 10:
+                time_period = '8am'
+            elif 10 <= current_hour < 12:
+                time_period = '10am'
+            elif 12 <= current_hour < 14:
+                time_period = '12pm'
+            elif 14 <= current_hour < 16:
+                time_period = '2pm'
+            elif 16 <= current_hour < 18:
+                time_period = '4pm'
+            elif 18 <= current_hour < 20:
+                time_period = '6pm'
+            else:
+                # Default to 6am for late night/early morning hours
+                time_period = '6am'
             
             forecast_data['time_period'] = time_period
             print(f"⏰ Time period: {time_period}")
@@ -240,7 +240,7 @@ class WillyWeatherScraper:
             return None
 
 def get_all_breaks_to_scrape():
-    """Get all unique regions from the database that need scraping (REMOVED async)"""
+    """Get all unique regions from the database that need scraping"""
     try:
         print("📋 Getting breaks from database...")
         response = supabase.table('surf_breaks').select('region').execute()
@@ -259,7 +259,7 @@ def get_all_breaks_to_scrape():
         return []
 
 def save_forecast_data(forecast_data: dict, region_name: str):
-    """Save forecast data to the database (REMOVED async)"""
+    """Save forecast data to the database"""
     try:
         print(f"💾 Saving forecast data for {region_name}...")
         
@@ -275,7 +275,7 @@ def save_forecast_data(forecast_data: dict, region_name: str):
         for break_data in response.data:
             break_id = break_data['id']
             
-            # Prepare forecast record (FIXED - only columns that exist)
+            # Prepare forecast record
             forecast_record = {
                 'break_id': break_id,
                 'forecast_date': forecast_data.get('forecast_date'),
@@ -303,7 +303,7 @@ def save_forecast_data(forecast_data: dict, region_name: str):
         print(f"❌ Error saving forecast data for {region_name}: {str(e)}")
 
 def run_scraper():
-    """Main scraper function (REMOVED async)"""
+    """Main scraper function"""
     print(f"\n🌊 Starting WillyWeather scraper run at {datetime.now()}")
     
     try:
