@@ -131,18 +131,31 @@ class WillyWeatherScraper:
             forecast_records = []
             forecasts = data.get('forecasts', {})
             
-            # Get swell data
-            swell_data = forecasts.get('swell', {}).get('days', [])
-            wind_data = forecasts.get('wind', {}).get('days', [])
+            # ✅ FIXED: Better error handling for missing forecast data
+            if not forecasts:
+                print(f"⚠️  No forecasts found in API response for {region_name}")
+                return []
             
-            for day_idx, day in enumerate(swell_data[:3]):  # Process 3 days
+            # Get swell and wind data with safe handling
+            swell_data = forecasts.get('swell')
+            wind_data = forecasts.get('wind')
+            
+            # Check if swell data exists and has the right structure
+            if not swell_data or not isinstance(swell_data, dict) or not swell_data.get('days'):
+                print(f"⚠️  No valid swell data found for {region_name}")
+                return []
+                
+            swell_days = swell_data.get('days', [])
+            wind_days = wind_data.get('days', []) if wind_data else []
+            
+            for day_idx, day in enumerate(swell_days[:3]):  # Process 3 days
                 forecast_date = day.get('dateTime')
                 entries = day.get('entries', [])
                 
                 # Get corresponding wind data for the same day
                 wind_entries = []
-                if day_idx < len(wind_data):
-                    wind_entries = wind_data[day_idx].get('entries', [])
+                if day_idx < len(wind_days):
+                    wind_entries = wind_days[day_idx].get('entries', [])
                 
                 for entry_idx, entry in enumerate(entries):
                     try:
@@ -154,7 +167,7 @@ class WillyWeatherScraper:
                         # Create forecast record
                         record = {
                             'break_id': f"{region_name.lower().replace(' ', '_')}_{entry.get('dateTime', '')}",
-                            'region': region_name,
+                            'region': region_name,  # ✅ This will work once you add the column
                             'forecast_date': forecast_date,
                             'forecast_time': entry.get('dateTime'),
                             'time_period': entry.get('dateTime'),
