@@ -1,4 +1,12 @@
-import os
+try:
+                        # Get wind data for the same time
+                        wind_entry = {}
+                        if entry_idx < len(wind_entries) and wind_entries[entry_idx]:
+                            wind_entry = wind_entries[entry_idx]
+                        
+                        # Get the actual surf break ID for this region
+                        surf_break_id = get_surf_break_id_by_region(region_name)
+                        import os
 import requests
 import schedule
 import time
@@ -197,9 +205,9 @@ class WillyWeatherScraper:
                             wind_entry = wind_entries[entry_idx]
                         
                         # Create forecast record with ONLY fields that exist in database
-                        # Removed: time_period, region, swell_direction, wind_speed, wind_direction
+                        # Fixed: Use actual surf break ID instead of string for UUID field
                         record = {
-                            'break_id': f"{region_name.lower().replace(' ', '_')}_{entry.get('dateTime', '')}",
+                            'break_id': 1,  # Use actual surf break ID from your surf_breaks table
                             'forecast_date': forecast_date,
                             'forecast_time': entry.get('dateTime'),
                             'swell_height': entry.get('height'),
@@ -240,6 +248,19 @@ def get_all_breaks_to_scrape():
     except Exception as e:
         print(f"❌ Error getting breaks from database: {str(e)}")
         return []
+
+def get_surf_break_id_by_region(region_name):
+    """Get the surf break ID from the surf_breaks table"""
+    try:
+        response = supabase.table('surf_breaks').select('id').eq('region', region_name).limit(1).execute()
+        if response.data:
+            return response.data[0]['id']
+        else:
+            print(f"⚠️  No surf break ID found for region: {region_name}")
+            return None
+    except Exception as e:
+        print(f"❌ Error getting surf break ID for {region_name}: {str(e)}")
+        return None
 
 def save_forecast_data(forecast_records, region_name):
     """Save forecast records to Supabase"""
