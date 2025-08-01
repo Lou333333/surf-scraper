@@ -4,9 +4,9 @@ import schedule
 import time
 from datetime import datetime, date
 from supabase import create_client, Client
+import uuid
 
 # Don't use load_dotenv() in production/Railway - variables are already available
-# Only load dotenv if running locally (when .env file exists)
 try:
     from dotenv import load_dotenv
     if os.path.exists('.env'):
@@ -58,40 +58,34 @@ AUSTRALIAN_SURF_LOCATIONS = {
     # Queensland  
     "Gold Coast": {"location_id": 4958, "state": "QLD"},
     "Sunshine Coast": {"location_id": 5238, "state": "QLD"},
-    "Fraser Coast": {"location_id": 5251, "state": "QLD"},
-    "Capricorn Coast": {"location_id": 4929, "state": "QLD"},
-    "Mackay": {"location_id": 4983, "state": "QLD"},
-    "Townsville": {"location_id": 5085, "state": "QLD"},
-    "Cairns": {"location_id": 4929, "state": "QLD"},
-    
-    # Victoria
-    "Melbourne": {"location_id": 4994, "state": "VIC"},
-    "Torquay": {"location_id": 5083, "state": "VIC"},
-    "Phillip Island": {"location_id": 5016, "state": "VIC"},
-    "East Gippsland": {"location_id": 4956, "state": "VIC"},
-    "West Coast": {"location_id": 5095, "state": "VIC"},
-    
-    # South Australia
-    "Adelaide": {"location_id": 4909, "state": "SA"},
-    "Fleurieu Peninsula": {"location_id": 4957, "state": "SA"},
-    "Yorke Peninsula": {"location_id": 5107, "state": "SA"},
-    "Eyre Peninsula": {"location_id": 4955, "state": "SA"},
-    "Kangaroo Island": {"location_id": 4972, "state": "SA"},
-    
-    # Western Australia
-    "Perth": {"location_id": 5017, "state": "WA"},
-    "Margaret River": {"location_id": 4987, "state": "WA"},
-    "Geraldton": {"location_id": 4959, "state": "WA"},
-    "Esperance": {"location_id": 4954, "state": "WA"},
-    "Albany": {"location_id": 4913, "state": "WA"},
-    "Exmouth": {"location_id": 4955, "state": "WA"},
-    "Broome": {"location_id": 4927, "state": "WA"}
 }
 
 class WillyWeatherScraper:
     def __init__(self):
         self.api_key = WILLY_WEATHER_API_KEY
         self.base_url = BASE_URL
+        self.break_cache = {}  # Cache break UUIDs
+        
+    def get_break_uuid_for_region(self, region_name):
+        """Get the UUID of the surf break for a given region"""
+        if region_name in self.break_cache:
+            return self.break_cache[region_name]
+            
+        try:
+            response = supabase.table('surf_breaks').select('id').eq('region', region_name).limit(1).execute()
+            
+            if response.data and len(response.data) > 0:
+                break_uuid = response.data[0]['id']
+                self.break_cache[region_name] = break_uuid
+                print(f"✅ Found break UUID for {region_name}: {break_uuid}")
+                return break_uuid
+            else:
+                print(f"❌ No surf break found in database for region: {region_name}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error getting break UUID for {region_name}: {str(e)}")
+            return None
         
     def get_forecast_data(self, location_id, region_name):
         """Get forecast data from WillyWeather API"""
@@ -109,101 +103,104 @@ class WillyWeatherScraper:
             }
             
             response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
             
-            data = response.json()
-            print(f"✅ Successfully fetched data for {region_name}")
-            
-            # DEBUG: Print the actual API response structure
-            print(f"🔍 DEBUG: API response structure for {region_name}")
-            if 'forecasts' in data:
-                forecasts = data['forecasts']
-                print(f"   Forecast keys: {list(forecasts.keys())}")
-                if 'swell' in forecasts:
-                    print(f"   Swell structure: {type(forecasts['swell'])}")
-                    if forecasts['swell']:
-                        print(f"   Swell keys: {list(forecasts['swell'].keys()) if isinstance(forecasts['swell'], dict) else 'Not a dict'}")
-            
-            # Process the forecast data
-            forecast_records = self.process_forecast_data(data, region_name)
-            return forecast_records
-            
-        except requests.RequestException as e:
-            print(f"❌ API request failed for {region_name}: {str(e)}")
-            return None
+            if response.status_code == 200:
+                print(f"✅ Successfully fetched data for {region_name}")
+                return response.json()
+            else:
+                print(f"❌ API request failed for {region_name}: {response.status_code}")
+                return None
+                
         except Exception as e:
-            print(f"❌ Error processing {region_name}: {str(e)}")
+            print(f"❌ Error fetching data for {region_name}: {str(e)}")
             return None
-    
+
     def process_forecast_data(self, data, region_name):
-        """Process raw API data into forecast records"""
+        """Process raw forecast data into database records"""
         try:
+            # Get the break UUID first
+            break_uuid = self.get_break_uuid_for_region(region_name)
+            if not break_uuid:
+                print(f"❌ Cannot process data for {region_name} - no break UUID found")
+                return []
+
             forecast_records = []
             forecasts = data.get('forecasts', {})
             
-            # Check if forecasts exist
-            if not forecasts:
-                print(f"⚠️  No forecasts found in API response for {region_name}")
-                return []
+            # Debug API response structure
+            print(f"🔍 DEBUG: API response structure for {region_name}")
+            print(f" Forecast keys: {list(forecasts.keys())}")
             
-            # Handle different possible API response structures
             swell_data = forecasts.get('swell')
             wind_data = forecasts.get('wind')
+            
+            print(f" Swell structure: {type(swell_data)}")
+            if swell_data:
+                print(f" Swell keys: {list(swell_data.keys()) if isinstance(swell_data, dict) else 'Not a dict'}")
             
             print(f"🔍 DEBUG: Swell data type for {region_name}: {type(swell_data)}")
             print(f"🔍 DEBUG: Wind data type for {region_name}: {type(wind_data)}")
             
-            # Try different ways to get swell days
-            swell_days = []
-            if swell_data:
-                if isinstance(swell_data, dict) and 'days' in swell_data:
-                    swell_days = swell_data.get('days', [])
-                elif isinstance(swell_data, list):
-                    swell_days = swell_data
-                    
-            wind_days = []
-            if wind_data:
-                if isinstance(wind_data, dict) and 'days' in wind_data:
-                    wind_days = wind_data.get('days', [])
-                elif isinstance(wind_data, list):
-                    wind_days = wind_data
+            # Check if swell data exists and is valid
+            if not swell_data or not isinstance(swell_data, dict):
+                print(f"❌ No forecast data returned for {region_name}")
+                print(f" Swell structure: {type(swell_data)}")
+                return []
             
+            swell_days = swell_data.get('days', [])
             print(f"🔍 DEBUG: Found {len(swell_days)} swell days for {region_name}")
             
             if not swell_days:
-                print(f"⚠️  No swell days found for {region_name}")
+                print(f"⚠️ No swell days found for {region_name}")
                 return []
             
-            for day_idx, day in enumerate(swell_days[:3]):  # Process 3 days
-                if not day or not isinstance(day, dict):
-                    continue
-                    
-                forecast_date = day.get('dateTime')
+            # Process each day
+            for day_idx, day in enumerate(swell_days):
+                day_date = day.get('dateTime', '')[:10]  # Extract YYYY-MM-DD
+                
                 entries = day.get('entries', [])
+                if not entries:
+                    print(f"⚠️ No entries found for day {day_idx} in {region_name}")
+                    continue
                 
-                # Get corresponding wind data for the same day
-                wind_entries = []
-                if day_idx < len(wind_days) and wind_days[day_idx]:
-                    wind_entries = wind_days[day_idx].get('entries', [])
-                
+                # Process each hourly entry
                 for entry_idx, entry in enumerate(entries):
-                    if not entry or not isinstance(entry, dict):
-                        continue
-                        
                     try:
-                        # Get wind data for the same time
-                        wind_entry = {}
-                        if entry_idx < len(wind_entries) and wind_entries[entry_idx]:
-                            wind_entry = wind_entries[entry_idx]
+                        entry_time = entry.get('dateTime', '')
+                        if not entry_time:
+                            continue
+                            
+                        # Extract hour and convert to time format
+                        hour = int(entry_time[11:13])
+                        if hour == 6: time_slot = '6am'
+                        elif hour == 8: time_slot = '8am'
+                        elif hour == 10: time_slot = '10am'
+                        elif hour == 12: time_slot = '12pm'
+                        elif hour == 14: time_slot = '2pm'
+                        elif hour == 16: time_slot = '4pm'
+                        elif hour == 18: time_slot = '6pm'
+                        else: continue  # Skip other hours
                         
-                        # Create forecast record with ONLY fields that exist in database
-                        # Removed: time_period, region, swell_direction, wind_speed, wind_direction
+                        # Get wind data for the same time
+                        wind_entry = None
+                        if wind_data and isinstance(wind_data, dict):
+                            wind_days = wind_data.get('days', [])
+                            if day_idx < len(wind_days):
+                                wind_entries = wind_days[day_idx].get('entries', [])
+                                if entry_idx < len(wind_entries):
+                                    wind_entry = wind_entries[entry_idx]
+                        
+                        # Create forecast record with proper UUID
                         record = {
-                            'break_id': f"{region_name.lower().replace(' ', '_')}_{entry.get('dateTime', '')}",
-                            'forecast_date': forecast_date,
-                            'forecast_time': entry.get('dateTime'),
+                            'break_id': break_uuid,  # Use actual UUID from database
+                            'forecast_date': day_date,
+                            'forecast_time': time_slot,
                             'swell_height': entry.get('height'),
+                            'swell_direction': entry.get('direction'),
                             'swell_period': entry.get('period'),
+                            'wind_speed': wind_entry.get('speed') if wind_entry else None,
+                            'wind_direction': wind_entry.get('direction') if wind_entry else None,
+                            'tide_height': None,  # Will be filled later if tide data available
                             'created_at': datetime.now().isoformat(),
                             'updated_at': datetime.now().isoformat()
                         }
@@ -232,7 +229,12 @@ def get_all_breaks_to_scrape():
             # Get unique regions
             unique_regions = list(set([break_data['region'] for break_data in response.data]))
             print(f"📍 Found {len(unique_regions)} unique regions in database: {unique_regions}")
-            return unique_regions
+            
+            # Filter to only regions we have location IDs for
+            valid_regions = [region for region in unique_regions if region in AUSTRALIAN_SURF_LOCATIONS]
+            print(f"📍 Found {len(valid_regions)} valid regions to scrape: {valid_regions}")
+            
+            return valid_regions
         else:
             print("⚠️  No surf breaks found in database")
             return []
@@ -258,112 +260,111 @@ def save_forecast_data(forecast_records, region_name):
             batch = forecast_records[i:i + batch_size]
             
             # Use upsert to handle duplicates
-            result = supabase.table('forecast_data').upsert(batch,
+            result = supabase.table('forecast_data').upsert(
+                batch,
                 on_conflict='break_id, forecast_date, forecast_time'
             ).execute()
             
-            total_saved += len(batch)
-                
-        print(f"✅ Saved {total_saved} forecast records for {region_name}")
-        print(f"📊 Sample data: {forecast_records[0] if forecast_records else 'No data'}")
+            if result.data:
+                batch_saved = len(result.data)
+                total_saved += batch_saved
+                print(f"  📦 Batch {i//batch_size + 1}: Saved {batch_saved} records")
+            
+        print(f"✅ Successfully saved {total_saved} forecast records for {region_name}")
         
     except Exception as e:
         print(f"❌ Error saving forecast data for {region_name}: {str(e)}")
+        print(f"    Error details: {e}")
 
-def run_scraper():
-    """Main scraper function"""
-    print(f"\n🌊 Starting WillyWeather scraper run at {datetime.now()}")
+def run_enhanced_scraper():
+    """Enhanced scraper that fetches from WillyWeather and saves to database"""
+    print("🌊 Starting Enhanced WillyWeather Surf Scraper...")
+    
+    # Test mode - run once for specific location
+    if os.getenv('TEST_MODE', 'false').lower() == 'true':
+        print("🧪 Running test mode...")
+        print("🧪 Testing scraper with Wollongong...")
+        
+        scraper = WillyWeatherScraper()
+        test_location = AUSTRALIAN_SURF_LOCATIONS["Wollongong"]
+        
+        # Fetch data
+        raw_data = scraper.get_forecast_data(test_location["location_id"], "Wollongong")
+        
+        if raw_data:
+            # Process data
+            forecast_records = scraper.process_forecast_data(raw_data, "Wollongong")
+            
+            if forecast_records:
+                print("✅ Test successful! Sample data:")
+                print(f"📊 Created {len(forecast_records)} records")
+                for i, record in enumerate(forecast_records[:5]):  # Show first 5
+                    print(f" {record['forecast_date']} {record['forecast_time']}: Swell {record['swell_height']}m")
+                
+                # Save to database
+                save_forecast_data(forecast_records, "Wollongong")
+            else:
+                print("❌ No forecast records created")
+        else:
+            print("❌ Failed to fetch data")
+        return
+    
+    # Production mode - scrape all regions
+    print("🔄 Production mode - scraping all regions...")
     
     try:
         scraper = WillyWeatherScraper()
-        print("✅ Scraper initialized successfully")
         
-        # Get all regions to scrape
+        # Get regions to scrape from database
         regions_to_scrape = get_all_breaks_to_scrape()
         
         if not regions_to_scrape:
             print("❌ No regions found to scrape")
             return
         
-        print(f"📍 Found {len(regions_to_scrape)} unique regions to scrape: {regions_to_scrape}")
+        print(f"🌊 Starting WillyWeather scraper run at {datetime.now()}")
         
-        # Scrape each region
-        successful_scrapes = 0
-        for region_name in regions_to_scrape:
-            try:
-                print(f"\n--- Processing {region_name} ---")
-                
-                location_info = AUSTRALIAN_SURF_LOCATIONS.get(region_name)
-                if not location_info:
-                    print(f"⚠️  No location ID found for {region_name}")
-                    continue
-                
-                location_id = location_info['location_id']
-                forecast_records = scraper.get_forecast_data(location_id, region_name)
-                
-                if forecast_records:
-                    save_forecast_data(forecast_records, region_name)
-                    successful_scrapes += 1
-                else:
-                    print(f"❌ No forecast data returned for {region_name}")
-                
-                # Wait between requests to be respectful
-                print("⏳ Waiting 5 seconds before next request...")
-                time.sleep(5)
-                
-            except Exception as e:
-                print(f"❌ Error processing {region_name}: {str(e)}")
+        for region in regions_to_scrape:
+            print(f"--- Processing {region} ---")
+            
+            # Get location info
+            location_info = AUSTRALIAN_SURF_LOCATIONS.get(region)
+            if not location_info:
+                print(f"⚠️ No location ID found for {region}, skipping...")
                 continue
+            
+            # Fetch forecast data
+            raw_data = scraper.get_forecast_data(location_info["location_id"], region)
+            
+            if raw_data:
+                # Process and save data
+                forecast_records = scraper.process_forecast_data(raw_data, region)
+                save_forecast_data(forecast_records, region)
+            else:
+                print(f"❌ Failed to fetch data for {region}")
+            
+            # Rate limiting - wait between requests
+            print("⏳ Waiting 5 seconds before next request...")
+            time.sleep(5)
         
-        print(f"\n✅ Scraper run completed!")
-        print(f"📊 Successfully scraped {successful_scrapes}/{len(regions_to_scrape)} regions")
+        print("🎉 Scraper run completed!")
         
     except Exception as e:
-        print(f"❌ Error in scraper run: {str(e)}")
+        print(f"❌ Scraper run failed: {str(e)}")
 
-def test_single_location():
-    """Test scraper with Wollongong only"""
-    print("🧪 Testing scraper with Wollongong...")
-    
-    scraper = WillyWeatherScraper()
-    location_id = 17663  # Wollongong City Beach
-    
-    forecast_records = scraper.get_forecast_data(location_id, "Wollongong")
-    
-    if forecast_records:
-        print("✅ Test successful! Sample data:")
-        print(f"📊 Created {len(forecast_records)} records")
-        for i, record in enumerate(forecast_records[:5]):  # Show first 5
-            swell = f"{record['swell_height']}m" if record['swell_height'] else "N/A"
-            print(f"  {record['forecast_time']}: Swell {swell}")
-        
-        # Try to save it
-        save_forecast_data(forecast_records, "Wollongong")
-    else:
-        print("❌ Test failed - no data returned")
-
-def schedule_scraper():
-    """Schedule the scraper to run periodically"""
+if __name__ == "__main__":
     print("🕒 Setting up WillyWeather scraper schedule...")
     print("📅 Will run every 6 hours and save hourly-specific data")
     
-    # Run every 6 hours
-    schedule.every(6).hours.do(run_scraper)
+    # Schedule the scraper to run every 6 hours
+    schedule.every(6).hours.do(run_enhanced_scraper)
     
-    # Also run once immediately
-    run_scraper()
+    # Run immediately on startup
+    run_enhanced_scraper()
     
-    # Keep the scheduler running
+    print("✅ Scraper initialized successfully")
+    
+    # Keep the script running
     while True:
         schedule.run_pending()
         time.sleep(60)  # Check every minute
-
-if __name__ == "__main__":
-    print("🌊 Starting Enhanced WillyWeather Surf Scraper...")
-    
-    # For testing, run just once
-    print("🧪 Running test mode...")
-    test_single_location()
-    
-    # Run the full scraper
-    schedule_scraper()
