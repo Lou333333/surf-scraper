@@ -114,6 +114,16 @@ class WillyWeatherScraper:
             data = response.json()
             print(f"✅ Successfully fetched data for {region_name}")
             
+            # DEBUG: Print the actual API response structure
+            print(f"🔍 DEBUG: API response structure for {region_name}")
+            if 'forecasts' in data:
+                forecasts = data['forecasts']
+                print(f"   Forecast keys: {list(forecasts.keys())}")
+                if 'swell' in forecasts:
+                    print(f"   Swell structure: {type(forecasts['swell'])}")
+                    if forecasts['swell']:
+                        print(f"   Swell keys: {list(forecasts['swell'].keys()) if isinstance(forecasts['swell'], dict) else 'Not a dict'}")
+            
             # Process the forecast data
             forecast_records = self.process_forecast_data(data, region_name)
             return forecast_records
@@ -131,51 +141,69 @@ class WillyWeatherScraper:
             forecast_records = []
             forecasts = data.get('forecasts', {})
             
-            # ✅ FIXED: Better error handling for missing forecast data
+            # Check if forecasts exist
             if not forecasts:
                 print(f"⚠️  No forecasts found in API response for {region_name}")
                 return []
             
-            # Get swell and wind data with safe handling
+            # Handle different possible API response structures
             swell_data = forecasts.get('swell')
             wind_data = forecasts.get('wind')
             
-            # Check if swell data exists and has the right structure
-            if not swell_data or not isinstance(swell_data, dict) or not swell_data.get('days'):
-                print(f"⚠️  No valid swell data found for {region_name}")
+            print(f"🔍 DEBUG: Swell data type for {region_name}: {type(swell_data)}")
+            print(f"🔍 DEBUG: Wind data type for {region_name}: {type(wind_data)}")
+            
+            # Try different ways to get swell days
+            swell_days = []
+            if swell_data:
+                if isinstance(swell_data, dict) and 'days' in swell_data:
+                    swell_days = swell_data.get('days', [])
+                elif isinstance(swell_data, list):
+                    swell_days = swell_data
+                    
+            wind_days = []
+            if wind_data:
+                if isinstance(wind_data, dict) and 'days' in wind_data:
+                    wind_days = wind_data.get('days', [])
+                elif isinstance(wind_data, list):
+                    wind_days = wind_data
+            
+            print(f"🔍 DEBUG: Found {len(swell_days)} swell days for {region_name}")
+            
+            if not swell_days:
+                print(f"⚠️  No swell days found for {region_name}")
                 return []
-                
-            swell_days = swell_data.get('days', [])
-            wind_days = wind_data.get('days', []) if wind_data else []
             
             for day_idx, day in enumerate(swell_days[:3]):  # Process 3 days
+                if not day or not isinstance(day, dict):
+                    continue
+                    
                 forecast_date = day.get('dateTime')
                 entries = day.get('entries', [])
                 
                 # Get corresponding wind data for the same day
                 wind_entries = []
-                if day_idx < len(wind_days):
+                if day_idx < len(wind_days) and wind_days[day_idx]:
                     wind_entries = wind_days[day_idx].get('entries', [])
                 
                 for entry_idx, entry in enumerate(entries):
+                    if not entry or not isinstance(entry, dict):
+                        continue
+                        
                     try:
                         # Get wind data for the same time
                         wind_entry = {}
-                        if entry_idx < len(wind_entries):
+                        if entry_idx < len(wind_entries) and wind_entries[entry_idx]:
                             wind_entry = wind_entries[entry_idx]
                         
-                        # Create forecast record
+                        # Create forecast record with ONLY fields that exist in database
+                        # Removed: time_period, region, swell_direction, wind_speed, wind_direction
                         record = {
                             'break_id': f"{region_name.lower().replace(' ', '_')}_{entry.get('dateTime', '')}",
-                            'region': region_name,  # ✅ This will work once you add the column
                             'forecast_date': forecast_date,
                             'forecast_time': entry.get('dateTime'),
-                            'time_period': entry.get('dateTime'),
                             'swell_height': entry.get('height'),
                             'swell_period': entry.get('period'),
-                            'swell_direction': entry.get('direction'),
-                            'wind_speed': wind_entry.get('speed'),
-                            'wind_direction': wind_entry.get('direction'),
                             'created_at': datetime.now().isoformat(),
                             'updated_at': datetime.now().isoformat()
                         }
@@ -305,10 +333,9 @@ def test_single_location():
     if forecast_records:
         print("✅ Test successful! Sample data:")
         print(f"📊 Created {len(forecast_records)} records")
-        for i, record in enumerate(forecast_records):
+        for i, record in enumerate(forecast_records[:5]):  # Show first 5
             swell = f"{record['swell_height']}m" if record['swell_height'] else "N/A"
-            wind = f"{record['wind_speed']}kt" if record['wind_speed'] else "N/A"
-            print(f"  {record['time_period']}: Swell {swell}, Wind {wind}")
+            print(f"  {record['forecast_time']}: Swell {swell}")
         
         # Try to save it
         save_forecast_data(forecast_records, "Wollongong")
