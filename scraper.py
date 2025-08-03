@@ -44,20 +44,18 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 BASE_URL = "https://api.willyweather.com.au/v2"
 
 # Australian surf locations from WillyWeather
+
 AUSTRALIAN_SURF_LOCATIONS = {
-    # New South Wales
-    "Sydney": {"location_id": 4950, "state": "NSW"},
-    "Central Coast": {"location_id": 4934, "state": "NSW"},
-    "Newcastle": {"location_id": 4988, "state": "NSW"},
-    "Mid North Coast": {"location_id": 5049, "state": "NSW"},
-    "Byron Bay": {"location_id": 4947, "state": "NSW"},
-    "Wollongong": {"location_id": 17663, "state": "NSW"},
-    "South Coast": {"location_id": 4923, "state": "NSW"},
-    "Far North Coast": {"location_id": 4947, "state": "NSW"},
+    # New South Wales - ✅ VERIFIED WORKING LOCATION IDs
+    "Sydney": {"location_id": 4988, "state": "NSW"},           # ✅ Bondi Beach
+    "Central Coast": {"location_id": 17572, "state": "NSW"},   # ✅ Terrigal
+    "Newcastle": {"location_id": 17641, "state": "NSW"},       # ✅ Newcastle Beach
+    "Mid North Coast": {"location_id": 2706, "state": "NSW"},  # ✅ Forster
+    "Byron Bay": {"location_id": 3690, "state": "NSW"},        # ✅ Byron
+    "Wollongong": {"location_id": 17663, "state": "NSW"},      # ✅ ALREADY WORKING
+    "South Coast": {"location_id": 17621, "state": "NSW"},     # ✅ Merimbula
+    "Far North Coast": {"location_id": 3690, "state": "NSW"},  # Same as Byron Bay
     
-    # Queensland  
-    "Gold Coast": {"location_id": 4958, "state": "QLD"},
-    "Sunshine Coast": {"location_id": 5238, "state": "QLD"},
 }
 
 class WillyWeatherScraper:
