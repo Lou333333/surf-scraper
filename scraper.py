@@ -91,50 +91,84 @@ class WillyWeatherScraper:
             return None
 
     def get_tide_height_for_time_slot(self, tide_data, forecast_date, time_slot):
-        """Extract tide height for a specific time slot from tide data"""
+        """Extract tide height and direction for a specific 2-hour time slot from tide data"""
         if not tide_data or not tide_data.get('days'):
-            return None
+            return None, None
         
-        # Map time slots to hours
-        time_to_hour = {
-            '6am': 6, '8am': 8, '10am': 10, '12pm': 12,
-            '2pm': 14, '4pm': 16, '6pm': 18
+        # Map time slots to start and end hours
+        time_to_hours = {
+            '6am': (6, 8),   # 6am-8am
+            '8am': (8, 10),  # 8am-10am
+            '10am': (10, 12), # 10am-12pm
+            '12pm': (12, 14), # 12pm-2pm
+            '2pm': (14, 16),  # 2pm-4pm
+            '4pm': (16, 18),  # 4pm-6pm
+            '6pm': (18, 20)   # 6pm-8pm
         }
         
-        target_hour = time_to_hour.get(time_slot)
-        if target_hour is None:
-            return None
+        hours_range = time_to_hours.get(time_slot)
+        if hours_range is None:
+            return None, None
+        
+        start_hour, end_hour = hours_range
         
         # Find the day matching our forecast date
         for tide_day in tide_data['days']:
             if tide_day['dateTime'][:10] == forecast_date:
                 entries = tide_day.get('entries', [])
                 
-                # Find the entry closest to our target hour
-                closest_entry = None
-                min_time_diff = float('inf')
+                # Find entries for start and end of time slot
+                start_tide = None
+                end_tide = None
+                start_time_diff = float('inf')
+                end_time_diff = float('inf')
                 
                 for entry in entries:
                     entry_datetime = entry.get('dateTime')
-                    if entry_datetime:
+                    if entry_datetime and 'height' in entry:
                         try:
                             # Parse the datetime string
                             entry_dt = datetime.fromisoformat(entry_datetime.replace('Z', '+00:00'))
                             entry_hour = entry_dt.hour
                             
-                            # Calculate time difference
-                            time_diff = abs(entry_hour - target_hour)
+                            # Check if this is closest to start hour
+                            start_diff = abs(entry_hour - start_hour)
+                            if start_diff < start_time_diff:
+                                start_time_diff = start_diff
+                                start_tide = entry['height']
                             
-                            if time_diff < min_time_diff:
-                                min_time_diff = time_diff
-                                closest_entry = entry
+                            # Check if this is closest to end hour
+                            end_diff = abs(entry_hour - end_hour)
+                            if end_diff < end_time_diff:
+                                end_time_diff = end_diff
+                                end_tide = entry['height']
+                                
                         except:
                             continue
                 
-                if closest_entry and 'height' in closest_entry:
-                    return closest_entry['height']
+                # Calculate average tide height and direction
+                if start_tide is not None and end_tide is not None:
+                    avg_tide = (start_tide + end_tide) / 2
                     
-        return None
+                    # Determine tide direction
+                    tide_diff = end_tide - start_tide
+                    if tide_diff > 0.1:  # Rising by more than 10cm
+                        tide_direction = "Rising"
+                    elif tide_diff < -0.1:  # Falling by more than 10cm
+                        tide_direction = "Falling"
+                    else:  # Change is less than 10cm
+                        tide_direction = "Stable"
+                    
+                    return avg_tide, tide_direction
+                    
+                elif start_tide is not None:
+                    # Only have start tide
+                    return start_tide, "Unknown"
+                elif end_tide is not None:
+                    # Only have end tide
+                    return end_tide, "Unknown"
+                    
+        return None, None
 
     def process_forecast_data(self, api_data, region_name, all_breaks):
         """Process API data and create forecast records for ALL breaks in the region"""
@@ -179,7 +213,7 @@ class WillyWeatherScraper:
                         wind_entry = wind_entries[entry_idx] if entry_idx < len(wind_entries) else None
                         
                         # Get tide height for this specific time slot
-                        tide_height = self.get_tide_height_for_time_slot(tide_data, forecast_date, forecast_time)
+                        tide_height, tide_direction = self.get_tide_height_for_time_slot(tide_data, forecast_date, forecast_time)
                         
                         # CREATE A FORECAST RECORD FOR EACH BREAK IN THE REGION
                         for break_data in all_breaks:
@@ -192,7 +226,8 @@ class WillyWeatherScraper:
                                 'swell_period': entry.get('period'),
                                 'wind_speed': wind_entry.get('speed') if wind_entry else None,
                                 'wind_direction': wind_entry.get('direction') if wind_entry else None,
-                                'tide_height': tide_height,  # Now gets actual tide data instead of None
+                                'tide_height': tide_height,  # Average tide height as number
+                                'tide_direction': tide_direction,  # "Rising", "Falling", or "Stable"
                                 'region': region_name,  # Keep region for reference
                                 'created_at': datetime.now().isoformat(),
                                 'updated_at': datetime.now().isoformat()
