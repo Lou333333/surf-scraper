@@ -90,6 +90,52 @@ class WillyWeatherScraper:
             print(f"❌ Error fetching forecast for {region_name}: {str(e)}")
             return None
 
+    def get_tide_height_for_time_slot(self, tide_data, forecast_date, time_slot):
+        """Extract tide height for a specific time slot from tide data"""
+        if not tide_data or not tide_data.get('days'):
+            return None
+        
+        # Map time slots to hours
+        time_to_hour = {
+            '6am': 6, '8am': 8, '10am': 10, '12pm': 12,
+            '2pm': 14, '4pm': 16, '6pm': 18
+        }
+        
+        target_hour = time_to_hour.get(time_slot)
+        if target_hour is None:
+            return None
+        
+        # Find the day matching our forecast date
+        for tide_day in tide_data['days']:
+            if tide_day['dateTime'][:10] == forecast_date:
+                entries = tide_day.get('entries', [])
+                
+                # Find the entry closest to our target hour
+                closest_entry = None
+                min_time_diff = float('inf')
+                
+                for entry in entries:
+                    entry_datetime = entry.get('dateTime')
+                    if entry_datetime:
+                        try:
+                            # Parse the datetime string
+                            entry_dt = datetime.fromisoformat(entry_datetime.replace('Z', '+00:00'))
+                            entry_hour = entry_dt.hour
+                            
+                            # Calculate time difference
+                            time_diff = abs(entry_hour - target_hour)
+                            
+                            if time_diff < min_time_diff:
+                                min_time_diff = time_diff
+                                closest_entry = entry
+                        except:
+                            continue
+                
+                if closest_entry and 'height' in closest_entry:
+                    return closest_entry['height']
+                    
+        return None
+
     def process_forecast_data(self, api_data, region_name, all_breaks):
         """Process API data and create forecast records for ALL breaks in the region"""
         try:
@@ -98,6 +144,7 @@ class WillyWeatherScraper:
             forecasts = api_data.get('forecasts', {})
             swell_data = forecasts.get('swell')
             wind_data = forecasts.get('wind')
+            tide_data = forecasts.get('tides')  # Get tide data
             
             if not swell_data or not swell_data.get('days'):
                 print(f"❌ No swell data available for {region_name}")
@@ -131,6 +178,9 @@ class WillyWeatherScraper:
                         forecast_time = time_slots[entry_idx]
                         wind_entry = wind_entries[entry_idx] if entry_idx < len(wind_entries) else None
                         
+                        # Get tide height for this specific time slot
+                        tide_height = self.get_tide_height_for_time_slot(tide_data, forecast_date, forecast_time)
+                        
                         # CREATE A FORECAST RECORD FOR EACH BREAK IN THE REGION
                         for break_data in all_breaks:
                             record = {
@@ -142,7 +192,7 @@ class WillyWeatherScraper:
                                 'swell_period': entry.get('period'),
                                 'wind_speed': wind_entry.get('speed') if wind_entry else None,
                                 'wind_direction': wind_entry.get('direction') if wind_entry else None,
-                                'tide_height': None,  # Will be filled later if tide data available
+                                'tide_height': tide_height,  # Now gets actual tide data instead of None
                                 'region': region_name,  # Keep region for reference
                                 'created_at': datetime.now().isoformat(),
                                 'updated_at': datetime.now().isoformat()
