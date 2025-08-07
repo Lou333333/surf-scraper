@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Fixed surf scraper that creates forecast data for EVERY individual surf break,
+with correct hourly time mapping from 24-hour WillyWeather API data.
+"""
+
 import os
 import requests
 import schedule
@@ -97,7 +103,8 @@ class WillyWeatherScraper:
             '12pm': (12, 14), # 12pm-2pm
             '2pm': (14, 16),  # 2pm-4pm
             '4pm': (16, 18),  # 4pm-6pm
-            '6pm': (18, 20)   # 6pm-8pm
+            '6pm': (18, 20),  # 6pm-8pm
+            '8pm': (20, 22)   # 8pm-10pm
         }
         
         hours_range = time_to_hours.get(time_slot)
@@ -205,7 +212,8 @@ class WillyWeatherScraper:
                     12: '12pm',  # 12pm entry
                     14: '2pm',   # 2pm entry (14:00)
                     16: '4pm',   # 4pm entry (16:00)
-                    18: '6pm'    # 6pm entry (18:00)
+                    18: '6pm',   # 6pm entry (18:00)
+                    20: '8pm'    # 8pm entry (20:00)
                 }
                 
                 # Process each desired time slot
