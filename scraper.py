@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Fixed surf scraper that creates forecast data for EVERY individual surf break,
-not just one per region.
-"""
-
 import os
 import requests
 import schedule
@@ -178,7 +172,7 @@ class WillyWeatherScraper:
             forecasts = api_data.get('forecasts', {})
             swell_data = forecasts.get('swell')
             wind_data = forecasts.get('wind')
-            tide_data = forecasts.get('tides')  # Get tide data
+            tide_data = forecasts.get('tides')
             
             if not swell_data or not swell_data.get('days'):
                 print(f"❌ No swell data available for {region_name}")
@@ -190,9 +184,11 @@ class WillyWeatherScraper:
             for day in swell_data['days']:
                 forecast_date = day['dateTime'][:10]  # Extract YYYY-MM-DD
                 
-                # Get entries for the day (different times)
+                # Get all entries for the day (24 hourly entries)
                 day_entries = day.get('entries', [])
                 wind_entries = []
+                
+                print(f"📅 {forecast_date}: Found {len(day_entries)} hourly entries")
                 
                 # Get corresponding wind data
                 if wind_data and wind_data.get('days'):
@@ -201,62 +197,83 @@ class WillyWeatherScraper:
                             wind_entries = wind_day.get('entries', [])
                             break
                 
-                # Process each time entry for the day
-                for entry_idx, entry in enumerate(day_entries):
+                # FIXED: Map specific hours to your desired time slots
+                hour_to_timeslot = {
+                    6: '6am',    # 6am entry
+                    8: '8am',    # 8am entry  
+                    10: '10am',  # 10am entry
+                    12: '12pm',  # 12pm entry
+                    14: '2pm',   # 2pm entry (14:00)
+                    16: '4pm',   # 4pm entry (16:00)
+                    18: '6pm'    # 6pm entry (18:00)
+                }
+                
+                # Process each desired time slot
+                for hour, time_slot in hour_to_timeslot.items():
                     try:
-                        # Map entry index to time slots
-                        time_slots = ['6am', '8am', '10am', '12pm', '2pm', '4pm', '6pm']
-                        if entry_idx >= len(time_slots):
+                        # Find the entry for this specific hour
+                        target_entry = None
+                        target_wind = None
+                        
+                        for i, entry in enumerate(day_entries):
+                            entry_datetime = entry.get('dateTime')
+                            if entry_datetime:
+                                try:
+                                    dt = datetime.fromisoformat(entry_datetime.replace('Z', '+00:00'))
+                                    if dt.hour == hour:
+                                        target_entry = entry
+                                        # Get corresponding wind entry
+                                        if i < len(wind_entries):
+                                            target_wind = wind_entries[i]
+                                        break
+                                except:
+                                    continue
+                        
+                        if not target_entry:
+                            print(f"⚠️ No data found for {time_slot} ({hour}:00)")
                             continue
                         
-                        forecast_time = time_slots[entry_idx]
-                        wind_entry = wind_entries[entry_idx] if entry_idx < len(wind_entries) else None
+                        print(f"✅ Found data for {time_slot}: {target_entry.get('height')}m")
                         
                         # Get tide height for this specific time slot
-                        tide_height, tide_direction = self.get_tide_height_for_time_slot(tide_data, forecast_date, forecast_time)
+                        tide_height, tide_direction = self.get_tide_height_for_time_slot(
+                            tide_data, forecast_date, time_slot
+                        )
                         
                         # CREATE A FORECAST RECORD FOR EACH BREAK IN THE REGION
                         for break_data in all_breaks:
                             record = {
-                                'break_id': break_data['id'],  # Specific break ID
+                                'break_id': break_data['id'],
                                 'forecast_date': forecast_date,
-                                'forecast_time': forecast_time,
-                                'swell_height': entry.get('height'),
-                                'swell_direction': entry.get('direction'),
-                                'swell_period': entry.get('period'),
-                                'wind_speed': wind_entry.get('speed') if wind_entry else None,
-                                'wind_direction': wind_entry.get('direction') if wind_entry else None,
-                                'tide_height': tide_height,  # Average tide height as number
-                                'tide_direction': tide_direction,  # "Rising", "Falling", or "Stable"
-                                'region': region_name,  # Keep region for reference
-                                'created_at': datetime.now().isoformat(),
-                                'updated_at': datetime.now().isoformat()
+                                'forecast_time': time_slot,
+                                'swell_height': target_entry.get('height'),
+                                'swell_direction': target_entry.get('direction'),
+                                'swell_period': target_entry.get('period'),
+                                'wind_speed': target_wind.get('speed') if target_wind else None,
+                                'wind_direction': target_wind.get('direction') if target_wind else None,
+                                'tide_height': tide_height,
+                                'tide_direction': tide_direction
                             }
                             
                             all_forecast_records.append(record)
-                        
+                            
                     except Exception as e:
-                        print(f"⚠️  Error processing entry {entry_idx} for {region_name}: {str(e)}")
+                        print(f"⚠️ Error processing {time_slot}: {str(e)}")
                         continue
             
-            print(f"📊 Generated {len(all_forecast_records)} total forecast records")
-            print(f"   ({len(all_forecast_records) // len(all_breaks)} time slots × {len(all_breaks)} breaks)")
+            print(f"✅ Generated {len(all_forecast_records)} forecast records")
             return all_forecast_records
             
         except Exception as e:
-            print(f"❌ Error processing forecast data for {region_name}: {str(e)}")
+            print(f"❌ Error processing forecast data: {str(e)}")
             return []
 
     def save_forecast_data(self, forecast_records):
-        """Save forecast data to database using upsert"""
-        if not forecast_records:
-            print("⚠️  No forecast records to save")
-            return False
-        
+        """Save forecast data to Supabase"""
         try:
             print(f"💾 Saving {len(forecast_records)} forecast records...")
             
-            # Use upsert to handle duplicates
+            # Upsert data (insert or update if exists)
             response = supabase.table('forecast_data').upsert(
                 forecast_records,
                 on_conflict='break_id, forecast_date, forecast_time'
@@ -266,7 +283,7 @@ class WillyWeatherScraper:
                 print(f"✅ Successfully saved {len(response.data)} forecast records")
                 return True
             else:
-                print("❌ Failed to save forecast data")
+                print("❌ No data returned from save operation")
                 return False
                 
         except Exception as e:
@@ -274,16 +291,14 @@ class WillyWeatherScraper:
             return False
 
 def get_unique_regions_from_database():
-    """Get all unique regions that have surf breaks in the database"""
+    """Get list of unique regions that have surf breaks in the database"""
     try:
-        print("🔍 Getting unique regions from database...")
-        
         response = supabase.table('surf_breaks').select('region').execute()
         
         if response.data:
             # Get unique regions
             unique_regions = list(set([break_data['region'] for break_data in response.data]))
-            print(f"📍 Found {len(unique_regions)} unique regions: {unique_regions}")
+            print(f"📍 Found regions: {unique_regions}")
             
             # Filter to only regions we have location IDs for
             valid_regions = [region for region in unique_regions if region in AUSTRALIAN_SURF_LOCATIONS]
@@ -370,8 +385,8 @@ def main():
     # Production mode - schedule runs
     print("⏰ PRODUCTION MODE - Scheduling runs")
     
-    # Schedule scraper to run every 6 hours
-    schedule.every(6).hours.do(run_scraper)
+    # UPDATED: Schedule scraper to run every 4 hours (was 6 hours)
+    schedule.every(4).hours.do(run_scraper)
     
     # Run once immediately
     run_scraper()
